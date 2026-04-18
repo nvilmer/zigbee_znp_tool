@@ -1,12 +1,20 @@
 import argparse
+import asyncio
 import logging
 import sys
+
+from zigpy_znp.zigbee.application import ControllerApplication
 
 from znp.core import find_radio_path, detect_baud_rate
 
 logger = logging.getLogger(__name__)
 
+
 def main():
+    asyncio.run(run())
+
+
+async def run():
     # 1. Create the parser
     parser = argparse.ArgumentParser(
         description="A Zigbee ZNP pair/monitor/reset tool"
@@ -28,20 +36,36 @@ def main():
     logger.info("Radio path: %s", radio_path)
 
     baud_rate = detect_baud_rate(radio_path)
-    logger.info("Baud rate set to: %s", baud_rate)
 
-    getattr(sys.modules[__name__], args.mode)()
+    config = {
+        'device': {
+            'path': radio_path,
+            'baudrate': baud_rate,
+        },
+    }
 
-def pair():
+    # noinspection PyTypeChecker
+    znp_app = ControllerApplication(config)
+    try:
+        await znp_app.startup(auto_form=True)
+        # logger.info("Connected to dongle")
+        await getattr(sys.modules[__name__], args.mode)()
+    finally:
+        logger.info("Shutting down...")
+        await znp_app.shutdown()  # Explicitly close the connection
+
+
+async def pair():
     logger.info("Starting pairing....")
 
 
-def reset():
+async def reset():
     logger.info("Running reset...")
 
 
-def monitor():
+async def monitor():
     logger.info("Start monitoring...")
+
 
 if __name__ == "__main__":
     main()
