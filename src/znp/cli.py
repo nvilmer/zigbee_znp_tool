@@ -5,6 +5,7 @@ import sys
 
 from zigpy_znp.zigbee.application import ControllerApplication
 
+from znp import data_base_path
 from znp.core import find_radio_path, detect_baud_rate
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ async def run():
     baud_rate = detect_baud_rate(radio_path)
 
     config = {
+        'database_path': str(data_base_path),
         'device': {
             'path': radio_path,
             'baudrate': baud_rate,
@@ -48,7 +50,14 @@ async def run():
     znp_app = ControllerApplication(config)
     try:
         await znp_app.startup(auto_form=True)
-        # logger.info("Connected to dongle")
+        logger.info("Connected to dongle")
+
+        devices = znp_app.devices
+        device_count = len(devices)
+        logger.info("Found %d devices", device_count)
+        logger.info("Devices: %s", devices)
+
+        # run for specified mode
         await getattr(sys.modules[__name__], args.mode)()
     finally:
         logger.info("Shutting down...")
