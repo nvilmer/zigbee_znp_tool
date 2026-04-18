@@ -1,0 +1,9 @@
+output/
+.idea/
+.venv/
+__pycache__/
+*.pyc
+zigbee.db
+dist/
+build/
+*.egg-info/
