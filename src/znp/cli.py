@@ -3,6 +3,8 @@ import asyncio
 import logging
 import sys
 
+import zigpy_znp.commands as c
+from zigpy_znp.types import ResetType
 from zigpy_znp.zigbee.application import ControllerApplication
 
 from znp import data_base_path
@@ -58,21 +60,25 @@ async def run():
         logger.info("Devices: %s", devices)
 
         # run for specified mode
-        await getattr(sys.modules[__name__], args.mode)()
+        await getattr(sys.modules[__name__], args.mode)(znp_app)
     finally:
         logger.info("Shutting down...")
         await znp_app.shutdown()  # Explicitly close the connection
 
 
-async def pair():
+async def pair(znp_app):
     logger.info("Starting pairing....")
 
 
-async def reset():
-    logger.info("Running reset...")
+# noinspection PyProtectedMember
+async def reset(znp_app):
+    logger.info("Starting reset...")
+    await znp_app._znp.request(c.SYS.ResetReq.Req(Type=ResetType.Soft))
+    logger.info("Hardware rebooted.")
+    await asyncio.sleep(10)
+    logger.info("Network is ONLINE.")
 
-
-async def monitor():
+async def monitor(znp_app):
     logger.info("Start monitoring...")
 
 
