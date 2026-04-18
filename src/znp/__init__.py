@@ -28,3 +28,9 @@ console_handler.setFormatter(formatter)
 log.addHandler(console_handler)
 log.addHandler(logging.NullHandler())
 
+# Zigbee database path
+data_base_path = Path(Path.home() / ".znp" / "zigbee.db")
+if not data_base_path.exists():
+    Path(data_base_path).touch()
+
+
