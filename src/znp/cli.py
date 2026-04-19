@@ -136,7 +136,7 @@ async def pair(znp_app):
         # Direct ZDO request to enable permit joining on the coordinator (0x0000)
         # AddrMode=0x02 (Addr16Bit)
         await znp_app._znp.request(c.ZDO.MgmtPermitJoinReq.Req(
-            AddrMode=c.ZDO.AddrMode.Addr16Bit, 
+            AddrMode=0x02, 
             Dst=0x0000, 
             Duration=pairing_duration, 
             TCSignificance=1
