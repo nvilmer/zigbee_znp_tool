@@ -100,8 +100,6 @@ async def pair(znp_app):
 
     def handle_init(device):
         logger.info(f"!!! DEVICE READY: {device.model} ({device.ieee}) !!!")
-        znp_app.topology.save()
-        logger.info("Pairing saved to database.")
 
     # ONE-LINE FIX: Use a dictionary for add_listener
     znp_app.add_listener({"device_joined": handle_join, "device_initialized": handle_init})
@@ -111,8 +109,6 @@ async def pair(znp_app):
     logger.info("Pairing active. Waiting for devices...")
     await asyncio.sleep(pairing_duration)
     logger.info("Pairing expired.")
-    znp_app.topology.save()
-    logger.info("Pairing saved to database.")
 
 
 # noinspection PyProtectedMember
