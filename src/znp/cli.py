@@ -4,6 +4,7 @@ import logging
 import sys
 
 import zigpy_znp.commands as c
+from zigpy.exceptions import NetworkNotFormed
 from zigpy.state import State
 from zigpy_znp.types import ResetType
 from zigpy_znp.zigbee.application import ControllerApplication
@@ -58,7 +59,13 @@ async def run():
     znp_app.state = State()
     try:
         await asyncio.sleep(2)
-        await asyncio.wait_for(znp_app.startup(auto_form=True), timeout=30)
+        await znp_app.connect()
+        try:
+            await asyncio.wait_for(znp_app.initialize(auto_form=False), timeout=36)
+        except NetworkNotFormed:
+            logger.info("Radio is blank. Forming a new network...")
+            await znp_app.form_network()
+
         if hasattr(znp_app.backups, "_backup_task") and znp_app.backups._backup_task:
             znp_app.backups._backup_task.cancel()
         if hasattr(znp_app, "_watchdog_task") and znp_app._watchdog_task:
@@ -99,8 +106,6 @@ async def pair(znp_app):
     # ONE-LINE FIX: Use a dictionary for add_listener
     znp_app.add_listener({"device_joined": handle_join, "device_initialized": handle_init})
 
-    await asyncio.sleep(2)
-    await znp_app.form_network()
     await znp_app.permit(time_s=pairing_duration)
 
     logger.info("Pairing active. Waiting for devices...")
