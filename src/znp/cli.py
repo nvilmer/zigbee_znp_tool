@@ -5,7 +5,6 @@ import sys
 
 import zigpy_znp.commands as c
 from zigpy.exceptions import NetworkNotFormed
-from zigpy.state import State
 from zigpy_znp.types import ResetType
 from zigpy_znp.zigbee.application import ControllerApplication
 
@@ -45,20 +44,22 @@ async def run():
 
     config = {
         'database_path': str(data_base_path),
-        'backups': {"enabled": False},
         'device': {
             'path': radio_path,
             'baudrate': baud_rate
         },
     }
 
-    # noinspection PyTypeChecker
-    znp_app = ControllerApplication(config)
+    # Use .new() but WITHOUT pre-calling SCHEMA() to avoid double validation bugs
+    # auto_form=False, and start_radio=False ensure we keep the existing connection logic
+    znp_app = await ControllerApplication.new(
+        config=config,
+        auto_form=False,
+        start_radio=False
+    )
     znp_app.backups.enabled = False
     znp_app.watchdog_enabled = False
-    znp_app.state = State()
     try:
-        await asyncio.sleep(2)
         await znp_app.connect()
         try:
             await asyncio.wait_for(znp_app.initialize(auto_form=False), timeout=36)
@@ -91,6 +92,7 @@ async def run():
 # noinspection PyProtectedMember
 async def pair(znp_app):
     logger.info("Starting pairing....")
+    # Ping the radio to ensure it's responsive
     await znp_app._znp.request(c.SYS.Ping.Req())
 
     pairing_duration = 254
@@ -101,10 +103,45 @@ async def pair(znp_app):
     def handle_init(device):
         logger.info(f"!!! DEVICE READY: {device.model} ({device.ieee}) !!!")
 
-    # ONE-LINE FIX: Use a dictionary for add_listener
-    znp_app.add_listener({"device_joined": handle_join, "device_initialized": handle_init})
+    def handle_interview_progress(device, status):
+        logger.info(f"Interview progress for {device.ieee}: {status}")
 
-    await znp_app.permit(time_s=pairing_duration)
+    def handle_device_updated(device):
+        logger.info(f"Device updated/persisted: {device.ieee}")
+
+    def handle_message(device, cluster, data):
+        logger.debug(f"Received message from {device.ieee}: cluster=0x{cluster:04x}, data={data.hex()}")
+        if cluster == 0x0500: # IAS Zone
+             logger.info(f"!!! SENSOR UPDATE from {device.ieee} (IAS Zone) !!!")
+
+    znp_app.add_listener({
+        "device_joined": handle_join,
+        "device_initialized": handle_init,
+        "device_interview_failed": lambda d, ex: logger.error(f"Interview failed for {d.ieee}: {ex}"),
+        "device_interview_progress": handle_interview_progress,
+        "device_updated": handle_device_updated,
+        "device_message": handle_message
+    })
+
+    # Give the radio a second to settle after network initialization
+    await asyncio.sleep(2)
+
+    try:
+        await znp_app.permit(time_s=pairing_duration)
+        logger.info(f"Permitting joins for {pairing_duration} seconds...")
+    except Exception as e:
+        logger.error(f"Failed to permit joining: {e}")
+        # On NWK_INVALID_REQUEST, we might need to try a ZNP-specific permit command
+        logger.info("Retrying with ZNP-specific permit command...")
+        # Direct ZDO request to enable permit joining on the coordinator (0x0000)
+        # AddrMode=0x02 (Addr16Bit)
+        await znp_app._znp.request(c.ZDO.MgmtPermitJoinReq.Req(
+            AddrMode=c.ZDO.AddrMode.Addr16Bit, 
+            Dst=0x0000, 
+            Duration=pairing_duration, 
+            TCSignificance=1
+        ))
+        logger.info(f"Permit join sent directly to ZNP for {pairing_duration} seconds.")
 
     logger.info("Pairing active. Waiting for devices...")
     await asyncio.sleep(pairing_duration)
@@ -138,7 +175,22 @@ async def reset(znp_app):
     logger.warning("Radio rebooted but network state is still offline.")
 
 async def monitor(znp_app):
-    logger.info("Start monitoring...")
+    logger.info("Start monitoring... (Press Ctrl+C to stop)")
+
+    def handle_message(device, cluster, data):
+        logger.debug(f"Received message from {device.ieee}: cluster=0x{cluster:04x}, data={data.hex()}")
+        if cluster == 0x0500: # IAS Zone
+             logger.info(f"!!! SENSOR UPDATE from {device.ieee} (IAS Zone) !!!")
+
+    znp_app.add_listener({
+        "device_message": handle_message
+    })
+
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except asyncio.CancelledError:
+        logger.info("Monitoring stopped.")
 
 
 if __name__ == "__main__":

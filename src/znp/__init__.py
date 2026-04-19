@@ -18,19 +18,26 @@ else:
     config.read(config_path)
 
 # setup logger
-log = logging.getLogger(__name__)
-log_level = config.get("settings", "log_level")
-log.setLevel(log_level)  # Set the base level high to capture everything
+log_level = config.get("settings", "log_level", fallback="INFO").upper()
+
+# Configure the root logger so that library logs (zigpy, etc.) are captured
+root_log = logging.getLogger()
+root_log.setLevel(log_level)
+
+# Create the console handler
 console_handler = logging.StreamHandler(sys.stdout)
-console_handler.setLevel(logging.INFO)  # Only show INFO+ to the user by default
+console_handler.setLevel(log_level)
 formatter = logging.Formatter('%(levelname)s: %(message)s')
 console_handler.setFormatter(formatter)
-log.addHandler(console_handler)
+
+# Clear existing handlers if any, then add our console handler to the root
+root_log.handlers = []
+root_log.addHandler(console_handler)
+
+# Get our specific logger for the 'znp' package
+log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
 # Zigbee database path
 data_base_path = Path(Path.home() / ".znp" / "zigbee.db")
-if not data_base_path.exists():
-    Path(data_base_path).touch()
-
-
+# We don't touch the file anymore, let zigpy create and initialize it correctly
