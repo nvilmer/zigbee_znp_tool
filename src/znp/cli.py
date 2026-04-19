@@ -5,6 +5,7 @@ import sys
 
 import zigpy_znp.commands as c
 from zigpy.exceptions import NetworkNotFormed
+from zigpy.state import State
 from zigpy_znp.types import ResetType
 from zigpy_znp.zigbee.application import ControllerApplication
 
@@ -50,22 +51,22 @@ async def run():
         },
     }
 
-    # Use .new() but WITHOUT pre-calling SCHEMA() to avoid double validation bugs
-    # auto_form=False, and start_radio=False ensure we keep the existing connection logic
-    znp_app = await ControllerApplication.new(
-        config=config,
-        auto_form=False,
-        start_radio=False
-    )
+    # Standard ControllerApplication initialization (Synchronous)
+    # This is often more reliable for persistence across different zigpy versions
+    znp_app = ControllerApplication(config)
     znp_app.backups.enabled = False
     znp_app.watchdog_enabled = False
+    znp_app.state = State()
     try:
         await znp_app.connect()
         try:
+            # Explicitly wait for initialization to complete and flush to DB
             await asyncio.wait_for(znp_app.initialize(auto_form=False), timeout=36)
         except NetworkNotFormed:
             logger.info("Radio is blank. Forming a new network...")
             await znp_app.form_network()
+            # After forming, re-initialize to ensure DB is written
+            await znp_app.initialize(auto_form=False)
 
         if hasattr(znp_app.backups, "_backup_task") and znp_app.backups._backup_task:
             znp_app.backups._backup_task.cancel()
@@ -123,24 +124,38 @@ async def pair(znp_app):
         "device_message": handle_message
     })
 
-    # Give the radio a second to settle after network initialization
-    await asyncio.sleep(2)
+    # Give the radio time to settle after network initialization
+    # 5 seconds is safer for a clean start/network formation
+    logger.info("Waiting for radio to settle...")
+    await asyncio.sleep(5)
 
     try:
         await znp_app.permit(time_s=pairing_duration)
         logger.info(f"Permitting joins for {pairing_duration} seconds...")
     except Exception as e:
-        logger.error(f"Failed to permit joining: {e}")
-        # On NWK_INVALID_REQUEST, we might need to try a ZNP-specific permit command
-        logger.info("Retrying with ZNP-specific permit command...")
+        logger.warning(f"Standard permit join failed: {e}. Retrying with direct ZNP command...")
         # Direct ZDO request to enable permit joining on the coordinator (0x0000)
-        # AddrMode=0x02 (Addr16Bit)
-        await znp_app._znp.request(c.ZDO.MgmtPermitJoinReq.Req(
-            AddrMode=0x02, 
-            Dst=0x0000, 
-            Duration=pairing_duration, 
-            TCSignificance=1
-        ))
+        # We use a very simple fallback to avoid any version-specific lookup errors
+        try:
+            # Try to use the zigpy-znp internal ZNP request directly
+            await znp_app._znp.request(c.ZDO.MgmtPermitJoinReq.Req(
+                AddrMode=0x02,  # Addr16Bit
+                Dst=0x0000, 
+                Duration=pairing_duration, 
+                TCSignificance=1
+            ))
+        except (ValueError, TypeError):
+            # If the Enum is required, try to find it simply
+            for attr in ["AddrMode", "AddressMode"]:
+                mode_enum = getattr(c.ZDO, attr, None)
+                if mode_enum and hasattr(mode_enum, "Addr16Bit"):
+                    await znp_app._znp.request(c.ZDO.MgmtPermitJoinReq.Req(
+                        AddrMode=mode_enum.Addr16Bit,
+                        Dst=0x0000,
+                        Duration=pairing_duration,
+                        TCSignificance=1
+                    ))
+                    break
         logger.info(f"Permit join sent directly to ZNP for {pairing_duration} seconds.")
 
     logger.info("Pairing active. Waiting for devices...")
