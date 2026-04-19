@@ -191,13 +191,53 @@ async def reset(znp_app):
 
 async def monitor(znp_app):
     logger.info("Start monitoring... (Press Ctrl+C to stop)")
+    
+    # Silence the "Unknown device" warnings from zigpy's core
+    logging.getLogger("zigpy.application").setLevel(logging.ERROR)
+
+    # Automatically permit joins so unknown devices can be interviewed
+    try:
+        await znp_app.permit(time_s=3600)
+        logger.info("Pairing enabled for 1 hour to allow discovery of unknown devices.")
+    except Exception as e:
+        logger.debug(f"Could not enable permit join in monitor mode: {e}")
+
+    # Monkey-patch packet_received to capture and log packets from unknown devices
+    original_packet_received = znp_app.packet_received
+
+    def packet_received(packet):
+        try:
+            znp_app.get_device_with_address(packet.src)
+        except KeyError:
+            # This is an unknown device, log it with data
+            addr = packet.src.address if hasattr(packet.src, "address") else packet.src
+            data_hex = packet.data.serialize().hex() if hasattr(packet.data, "serialize") else "unknown"
+            logger.info(f"!!! MESSAGE from UNKNOWN DEVICE: {addr} | Cluster: 0x{packet.cluster_id:04x} | Data: {data_hex}")
+        
+        return original_packet_received(packet)
+
+    znp_app.packet_received = packet_received
+
+    def handle_join(device):
+        logger.info(f"!!! DEVICE JOINED: {device.ieee} (NWK: {device.nwk}) !!!")
+
+    def handle_init(device):
+        logger.info(f"!!! DEVICE READY: {device.model} ({device.ieee}) !!!")
+
+    def handle_interview_progress(device, status):
+        logger.info(f"Interview progress for {device.ieee}: {status}")
 
     def handle_message(device, cluster, data):
-        logger.debug(f"Received message from {device.ieee}: cluster=0x{cluster:04x}, data={data.hex()}")
+        addr = getattr(device, "ieee", device.nwk if hasattr(device, "nwk") else "Unknown")
+        logger.debug(f"Received message from {addr}: cluster=0x{cluster:04x}, data={data.hex()}")
         if cluster == 0x0500: # IAS Zone
-             logger.info(f"!!! SENSOR UPDATE from {device.ieee} (IAS Zone) !!!")
+             logger.info(f"!!! SENSOR UPDATE from {addr} (IAS Zone) !!!")
 
     znp_app.add_listener({
+        "device_joined": handle_join,
+        "device_initialized": handle_init,
+        "device_interview_failed": lambda d, ex: logger.error(f"Interview failed for {d.ieee}: {ex}"),
+        "device_interview_progress": handle_interview_progress,
         "device_message": handle_message
     })
 
